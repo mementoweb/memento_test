@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from memento_test.server import application, \
-    convert_to_datetime, convert_to_http_datetime, \
+    convert_to_datetime, \
     parse_link_header, get_uri_dt_for_rel
 import unittest
 import logging

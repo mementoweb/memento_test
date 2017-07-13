@@ -31,6 +31,39 @@ $ python setup.py install
 $ memento_test_server
 ```
 
+## Testing without running as a server
+
+This library can be invoked by another Python application without running this as a server. Meaning, another 
+application or library can make virtual requests to this library and receive responses without starting up 
+this up as a server. Typical use case for this is in unit testing, whereby, an application will not have to
+start a server every time the test cases need to be run. For this, memento_test uses werkzeug's test suite to
+create a mock server. 
+
+For example:
+```python
+
+import unittest
+from memento_test.server import application
+from werkzeug.test import Client, EnvironBuilder
+
+class MementoTest(unittest.TestCase):
+
+    def test_on_all_headers(self):
+
+        client = Client(application)
+        builder = EnvironBuilder(path="/2016/http://www.espn.com",
+                                 headers=[("Prefer", "all_headers")])
+        env = builder.get_environ()
+        app_iter, status, headers = client.run_wsgi_app(env)
+
+        assert "200" in status
+        assert headers.get("Link")
+        assert headers.get("Memento-Datetime") is not None
+```
+
+More examples can be found in the [tests](./tests/).
+
+
 ## Preferences
 
 For complete information on the Memento 
