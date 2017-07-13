@@ -1,0 +1,8 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from werkzeug.serving import run_simple
+from memento_test.server import application
+
+
+run_simple("localhost", 4000, application)
