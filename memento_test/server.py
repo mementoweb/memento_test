@@ -15,6 +15,8 @@ logging.getLogger(__name__)
 
 ARCHIVE_DATE_FORMAT = "%Y%m%d%H%M%S"
 
+ORGINAL_PREFERENCES = {"no_native_tg_url", "native_tg_url", "redirect"}
+
 TG_PREFERENCES = {"all_headers", "required_headers", "no_headers",
                   "no_link_header", "no_vary_header",
                   "no_original_link_header",
@@ -35,7 +37,7 @@ MEMENTO_PREFERENCES = {"all_headers", "required_headers", "no_headers",
                        "invalid_archived_redirect", "invalid_internal_redirect",
                        }
 
-HOST_NAME = "http://www.example.com"
+HOST_NAME = "http://localhost:4000/"
 LINK_TMPL = '<%s>; rel="%s"'
 LINK_ADD_PARAM = '; %s="%s"'
 HTTP_DT_FORMAT = "%a, %d %b %Y %H:%M:%S GMT"
@@ -240,7 +242,7 @@ class MementoServer(object):
     @cached_property
     def url_map(self):
         rules = [
-            Rule("/", endpoint="index"),
+            Rule("/", endpoint="original", methods=["GET", "HEAD"]),
             Rule("/tg/<path:uri_r>", endpoint="timegate", methods=["GET", "HEAD"]),
             Rule("/<int:mem_dt>/<path:uri_r>", endpoint="memento", methods=["GET", "HEAD"])
         ]
@@ -263,15 +265,16 @@ class MementoServer(object):
             logging.debug("endpoint: %s" % endpoint)
             logging.debug("values: %s" % values)
 
-            return getattr(self, "on_request")(request, **values)
+            return self.on_request(request, endpoint, **values)
         except HTTPException as e:
             return e
 
-    def on_request(self, request, uri_r, mem_dt=None):
+    def on_request(self, request, endpoint, uri_r=None, mem_dt=None):
         """
         Processes the request and prepares the response. Mainly checks the `Prefer` header
         and invokes the appropriate method.
         :param request: the Werkzeug Request object.
+        :param endpoint: the matched endpoint of the request
         :param uri_r: the uri_r in the request URL
         :param mem_dt: the memento datetime in the request URL
         :return: the werkzeug Response object.
@@ -288,8 +291,11 @@ class MementoServer(object):
         logging.debug("prefer: %s" % prefer)
         logging.debug("mem_dt: %s" % mem_dt)
 
-        if not prefer:
-            headers, status = self.on_all_headers(request, headers=headers, endpoint="timegate")
+        if not prefer and endpoint == "original":
+            headers, status = self.on_native_tg_url(request, headers=headers, endpoint=endpoint)
+            return Response(status=status, headers=headers)
+        elif not prefer:
+            headers, status = self.on_all_headers(request, headers=headers, endpoint=endpoint)
             return Response(status=status, headers=headers)
 
         prefs = prefer.split(",")
@@ -298,13 +304,13 @@ class MementoServer(object):
         for p in prefs:
             p = p.strip()
 
-            logging.debug(mem_dt)
-            logging.debug(p)
-            logging.debug(p.strip() in MEMENTO_PREFERENCES)
-
-            if mem_dt and p in MEMENTO_PREFERENCES:
+            if endpoint == "memento" and p in MEMENTO_PREFERENCES:
                 headers, status = getattr(self, "on_" + p) \
                     (request, headers=headers, endpoint="memento", mem_dt=mem_dt)
+                pref_applied.append(p)
+            elif endpoint == "original" and p in ORGINAL_PREFERENCES:
+                headers, status = getattr(self, "on_" + p) \
+                    (request, headers=headers, endpoint="original", mem_dt=mem_dt)
                 pref_applied.append(p)
             elif p in TG_PREFERENCES:
                 headers, status = getattr(self, "on_" + p) \
@@ -315,13 +321,53 @@ class MementoServer(object):
         if len(pref_applied) > 0:
             headers["Preference-Applied"] = ", ".join(pref_applied)
         else:
-            if mem_dt is None:
-                headers, status = self.on_all_headers(request, headers=headers, endpoint="timegate")
-            else:
-                headers, status = self.on_all_headers(request, headers=headers,
-                                                      endpoint="memento", mem_dt=mem_dt)
+            if endpoint in ["memento", "timegate"]:
+                headers, status = self.on_all_headers(request, headers=headers, endpoint=endpoint)
+            elif endpoint == "original":
+                headers, status = self.on_native_tg_url(request, headers=headers,
+                                                      endpoint=endpoint, mem_dt=mem_dt)
 
         return Response(status=status, headers=headers)
+
+    def on_native_tg_url(self, request, headers=None, endpoint=None, mem_dt=None):
+        """
+        Returns a native timegate url in the link header of the original
+        :param request: The request object
+        :param headers: dict: the appropriate memento headers to be returned
+        :param endpoint: str: the memento endpoint the request was for. `memento`|`timegate`|`timemap`
+        :param mem_dt: str: The datetime string provided in the request url similar to
+        what IA provides. eg: 20150101243059
+        :return: (dict: int) (headers, HTTP status)
+        """
+        urls = self.url_map.bind(HOST_NAME[:-1], "/")
+        tg_url = urls.build("timegate", {"uri_r": HOST_NAME}, force_external=True)[7:]
+        headers["Link"] = LINK_TMPL % (tg_url, "timegate")
+        return headers, 200
+
+    def on_no_native_tg_url(self, request, headers=None, endpoint=None, mem_dt=None):
+        """
+        Returns no native timegate url in the link header of the original
+        :param request: The request object
+        :param headers: dict: the appropriate memento headers to be returned
+        :param endpoint: str: the memento endpoint the request was for. `memento`|`timegate`|`timemap`
+        :param mem_dt: str: The datetime string provided in the request url similar to
+        what IA provides. eg: 20150101243059
+        :return: (dict: int) (headers, HTTP status)
+        """
+        return headers, 200
+
+    def on_redirect(self, request, headers=None, endpoint=None, mem_dt=None):
+        """
+        The original redirects with a 302
+        :param request: The request object
+        :param headers: dict: the appropriate memento headers to be returned
+        :param endpoint: str: the memento endpoint the request was for. `memento`|`timegate`|`timemap`
+        :param mem_dt: str: The datetime string provided in the request url similar to
+        what IA provides. eg: 20150101243059
+        :return: (dict: int) (headers, HTTP status)
+        """
+        headers["Location"] = HOST_NAME
+        return headers, 302
 
     def on_all_headers(self, request, headers=None, endpoint=None,
                        mem_dt=None):
@@ -342,7 +388,7 @@ class MementoServer(object):
             return headers, 200
         elif endpoint == "timegate":
             headers["Vary"] = "accept-datetime"
-            mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+            mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                       "/" + self.uri_r
             headers["Location"] = mem_uri
             return headers, 302
@@ -366,7 +412,7 @@ class MementoServer(object):
             return headers, 200
         elif endpoint == "timegate":
             headers["Vary"] = "accept-datetime"
-            mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+            mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                       "/" + self.uri_r
             headers["Location"] = mem_uri
             return headers, 302
@@ -386,7 +432,7 @@ class MementoServer(object):
         if endpoint == "memento":
             return headers, 200
         elif endpoint == "timegate":
-            headers["Location"] = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+            headers["Location"] = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                   "/" + self.uri_r
             return headers, 302
 
@@ -408,7 +454,7 @@ class MementoServer(object):
             return headers, 200
         elif endpoint == "timegate":
             headers["Vary"] = "accept-datetime"
-            mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+            mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                       "/" + self.uri_r
             headers["Location"] = mem_uri
             return headers, 302
@@ -425,7 +471,7 @@ class MementoServer(object):
         :return: (dict: int) (headers, HTTP status)
         """
         headers["Link"] = self._create_link_header()
-        mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+        mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                   "/" + self.uri_r
         headers["Location"] = mem_uri
         return headers, 302
@@ -448,7 +494,7 @@ class MementoServer(object):
             return headers, 200
         elif endpoint == "timegate":
             headers["Vary"] = "accept-datetime"
-            mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+            mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                       "/" + self.uri_r
             headers["Location"] = mem_uri
             return headers, 302
@@ -466,7 +512,7 @@ class MementoServer(object):
         """
         headers["Link"] = self._create_link_header()
         headers["Vary"] = "accept-dt"
-        mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+        mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                   "/" + self.uri_r
         headers["Location"] = mem_uri
         return headers, 302
@@ -490,7 +536,7 @@ class MementoServer(object):
             return headers, 200
         elif endpoint == "timegate":
             headers["Vary"] = "accept-datetime"
-            mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+            mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                       "/" + self.uri_r
             headers["Location"] = mem_uri
             return headers, 302
@@ -507,7 +553,7 @@ class MementoServer(object):
         :return: (dict: int) (headers, HTTP status)
         """
 
-        mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+        mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                   "/" + self.uri_r
 
         mem_http_dt = convert_to_http_datetime(self.accept_datetime)
@@ -520,7 +566,7 @@ class MementoServer(object):
             return headers, 200
         elif endpoint == "timegate":
             headers["Vary"] = "accept-datetime"
-            mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+            mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                       "/" + self.uri_r
             headers["Location"] = mem_uri
             return headers, 302
@@ -569,7 +615,7 @@ class MementoServer(object):
         """
         headers["Link"] = self._create_link_header()
         headers["Vary"] = "accept-datetime"
-        mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+        mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                   "/" + self.uri_r
         headers["Location"] = mem_uri
         return headers, 302
@@ -587,7 +633,7 @@ class MementoServer(object):
         """
         headers["Link"] = self._create_link_header()
         headers["Vary"] = "accept-datetime"
-        mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+        mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                   "/" + self.uri_r
         headers["Location"] = mem_uri
         return headers, 303
@@ -605,7 +651,7 @@ class MementoServer(object):
         """
         headers["Link"] = self._create_link_header()
         headers["Vary"] = "accept-datetime"
-        mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+        mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                   "/" + self.uri_r
         headers["Content-Location"] = mem_uri
         mem_http_dt = convert_to_http_datetime(self.accept_datetime)
@@ -714,7 +760,7 @@ is provided in the request.
         """
         headers["Link"] = self._create_link_header()
         headers["Vary"] = "accept-datetime"
-        mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+        mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                   "/" + self.uri_r
         headers["Location"] = mem_uri
         mem_http_dt = convert_to_http_datetime(self.accept_datetime)
@@ -767,7 +813,7 @@ is provided in the request.
         headers["Link"] = self._create_link_header()
         mem_http_dt = convert_to_http_datetime(self.accept_datetime)
         headers["Memento-Datetime"] = mem_http_dt
-        headers["Location"] = HOST_NAME + "/" + \
+        headers["Location"] = HOST_NAME + \
             self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT)[:-6] + \
             "/" + self.uri_r
         return headers, 302
@@ -783,7 +829,7 @@ is provided in the request.
         what IA provides. eg: 20150101243059
         :return: (dict: int) (headers, HTTP status)
         """
-        headers["Location"] = HOST_NAME + "/" + \
+        headers["Location"] = HOST_NAME + \
                               self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT)[:-6] + \
                               "/" + self.uri_r
         return headers, 302
@@ -821,18 +867,18 @@ is provided in the request.
         if original:
             lh.append(LINK_TMPL % (self.uri_r, "original"))
         if first:
-            first_uri = HOST_NAME + "/" + self.first_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+            first_uri = HOST_NAME + self.first_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                     "/" + self.uri_r
             lh.append(LINK_TMPL % (first_uri, "first memento") +
                   LINK_ADD_PARAM % ("datetime", convert_to_http_datetime(self.first_datetime)))
 
         if last:
-            last_uri = HOST_NAME + "/" + self.last_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+            last_uri = HOST_NAME + self.last_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                    "/" + self.uri_r
             lh.append(LINK_TMPL % (last_uri, "last memento") +
                   LINK_ADD_PARAM % ("datetime", convert_to_http_datetime(self.last_datetime)))
         if memento:
-            mem_uri = HOST_NAME + "/" + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
+            mem_uri = HOST_NAME + self.accept_datetime.strftime(ARCHIVE_DATE_FORMAT) + \
                   "/" + self.uri_r
 
             mem_http_dt = convert_to_http_datetime(self.accept_datetime)

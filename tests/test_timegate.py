@@ -27,7 +27,7 @@ class TimeGateTest(unittest.TestCase):
 
         lh = parse_link_header(headers.get("Link"))
 
-        assert get_uri_dt_for_rel(lh, ["original"])
+        assert get_uri_dt_for_rel(lh, ["original"]).get("original")
         assert get_uri_dt_for_rel(lh, ["first"])
         f_dt = get_uri_dt_for_rel(lh, ["first"]).get("first")
         assert convert_to_datetime(f_dt["datetime"][0]) is not None

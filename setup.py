@@ -63,16 +63,15 @@ class BetterClean(Command):
         shutil.rmtree('dist', onerror = BetterClean.handle_remove_errors)
 
 
-with open("README.md") as f:
-    readme = f.read()
+#with open("README.md") as f:
+#    readme = f.read()
 
-with open("LICENSE") as f:
-    license = f.read()
-
+#with open("LICENSE") as f:
+#    license = f.read()
 
 setup(
     name="memento_test",
-    version="0.1.0",
+    version="0.1.3",
     description="A Memento Test Suite",
     keywords="memento http test",
     #long_description=readme,
