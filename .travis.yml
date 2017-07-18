@@ -1,0 +1,13 @@
+language: python
+cache: # caching is only available for customers who pay
+    directories:
+        - $HOME/.cache/pip
+python:
+    - "2.7"
+    - "3.4"
+    - "3.5"
+install:
+    - "pip install werkzeug>=0.12"
+script:
+    - python setup.py test
+    - python setup.py sdist bdist_wheel
