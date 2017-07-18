@@ -1,4 +1,4 @@
-# Memento Test Server
+# Memento Test Server ![Build Status](https://travis-ci.org/mementoweb/memento_test.svg?branch=master)
 
 Memento Test Server that can be used by Memento clients for testing various scenarios
  from the Memento Protocol. TimeGate and Memento endpoints are provided in this server.
