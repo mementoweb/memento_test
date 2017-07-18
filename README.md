@@ -1,3 +1,5 @@
+# Memento Test Server
+
 Memento Test Server that can be used by Memento clients for testing various scenarios
  from the Memento Protocol. TimeGate and Memento endpoints are provided in this server.
 
@@ -22,8 +24,7 @@ A list of all the Preferences that the server recognizes are provided in the
 
 ## Install
 ```bash
-$ cd /path/to/memento_test
-$ python setup.py install
+$ pip install memento_test
 ```
 
 ## Starting the Server
